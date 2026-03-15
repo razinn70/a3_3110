@@ -1,0 +1,26 @@
+VM_SIZE	4096B
+RAM_SIZE	1024B
+PAGE_SIZE	128B
+NUM_VPAGES	32
+NUM_FRAMES	8
+PAGE_POLICY	MIN
+TLB_SIZE	4
+TLB_POLICY	MIN
+
+     0  [vaddr] 0x0ABA	-x->	[paddr] 0x003A
+     1  [vaddr] 0x0A37	-x->	[paddr] 0x00B7
+     2  [vaddr] 0x009E	-x->	[paddr] 0x011E
+     3  [vaddr] 0x0C85	-x->	[paddr] 0x0185
+     4  [vaddr] 0x0DA7	-x->	[paddr] 0x0227
+     5  [vaddr] 0x0C79	-x->	[paddr] 0x02F9
+     6  [vaddr] 0x0999	-x->	[paddr] 0x0319
+     7  [vaddr] 0x08C7	-x->	[paddr] 0x03C7
+     8  [vaddr] 0x0AE9	===>	[paddr] 0x0069
+     9  [vaddr] 0x038E	-x->	[paddr] 0x000E
+
+Total accesses : 10
+Page faults    : 9
+Fault rate     : 90.00%
+TLB hits       : 1
+TLB misses     : 9
+TLB hit rate   : 10.00%
