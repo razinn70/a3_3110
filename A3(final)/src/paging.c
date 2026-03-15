@@ -26,7 +26,7 @@ int main(int argc, char *argv[])
     unsigned int num_frames = RAM_SIZE / page_size;
 
     for (unsigned int i = 0; i < num_vpages; i++) page_table[i] = -1;
-    for (unsigned int i = 0; i < num_frames; i++) frame_owner[i] = -1;
+    for (int i = 0; i < RAM_SIZE; i++) frame_owner[i] = -1;
 
     printf("VM_SIZE\t%uB\n", VM_SIZE);
     printf("RAM_SIZE\t%uB\n", RAM_SIZE);
@@ -85,6 +85,8 @@ int main(int argc, char *argv[])
                 fifo_next = (fifo_next + 1) % num_frames;
             } else {
                 frame = 0;
+                int old_vpn = frame_owner[0];
+                if (old_vpn >= 0) page_table[old_vpn] = -1;
             }
 
             page_table[vpn] = frame;
