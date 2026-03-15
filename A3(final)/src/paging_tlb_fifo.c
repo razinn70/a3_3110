@@ -5,7 +5,6 @@
 
 #define VM_SIZE   (4 * 1024)
 #define RAM_SIZE  (1 * 1024)
-#define TLB_SIZE  4
 
 typedef struct {
     int vpn;
@@ -15,7 +14,8 @@ typedef struct {
 int page_table[VM_SIZE];    // vpn -> frame (-1 if not mapped)
 int frame_owner[RAM_SIZE];  // frame -> vpn (-1 if empty)
 
-TLB_Entry tlb[TLB_SIZE];
+TLB_Entry *tlb = NULL;
+int tlb_size  = 4;
 int tlb_count = 0;
 int tlb_fifo_head = 0;  // oldest entry (next to evict)
 
@@ -28,17 +28,30 @@ static int tlb_lookup(unsigned int vpn)
     return -1;
 }
 
+// Remove TLB entry for vpn (called when its RAM frame is evicted)
+static void tlb_invalidate(unsigned int vpn)
+{
+    for (int i = 0; i < tlb_count; i++) {
+        if (tlb[i].vpn == (int)vpn) {
+            tlb[i].vpn = -1;  // mark invalid; FIFO will overwrite eventually
+            return;
+        }
+    }
+}
+
 // Insert vpn/frame into TLB (FIFO eviction when full)
 static void tlb_insert(unsigned int vpn, int frame)
 {
-    if (tlb_count < TLB_SIZE) {
+    /* If the slot is already occupied by an invalid entry (vpn==-1),
+       reuse it via FIFO order; otherwise just follow FIFO normally. */
+    if (tlb_count < tlb_size) {
         tlb[tlb_count].vpn   = (int)vpn;
         tlb[tlb_count].frame = frame;
         tlb_count++;
     } else {
         tlb[tlb_fifo_head].vpn   = (int)vpn;
         tlb[tlb_fifo_head].frame = frame;
-        tlb_fifo_head = (tlb_fifo_head + 1) % TLB_SIZE;
+        tlb_fifo_head = (tlb_fifo_head + 1) % tlb_size;
     }
 }
 
@@ -50,10 +63,16 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
             page_size = (unsigned int)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+            tlb_size = atoi(argv[++i]);
         } else {
             input_file = argv[i];
         }
     }
+
+    tlb = (TLB_Entry *)malloc((size_t)tlb_size * sizeof(TLB_Entry));
+    if (!tlb) { perror("malloc"); return EXIT_FAILURE; }
+    for (int i = 0; i < tlb_size; i++) { tlb[i].vpn = -1; tlb[i].frame = -1; }
 
     unsigned int num_vpages = VM_SIZE / page_size;
     unsigned int num_frames = RAM_SIZE / page_size;
@@ -67,17 +86,18 @@ int main(int argc, char *argv[])
     printf("NUM_VPAGES\t%u\n", num_vpages);
     printf("NUM_FRAMES\t%u\n", num_frames);
     printf("PAGE_POLICY\tFIFO\n");
-    printf("TLB_SIZE\t%d\n", TLB_SIZE);
+    printf("TLB_SIZE\t%d\n", tlb_size);
     printf("TLB_POLICY\tFIFO\n\n");
 
     FILE *fp = stdin;
     if (input_file) {
         fp = fopen(input_file, "r");
-        if (!fp) { perror(input_file); return EXIT_FAILURE; }
+        if (!fp) { perror(input_file); free(tlb); return EXIT_FAILURE; }
     }
 
     unsigned long faults = 0, accesses = 0;
     unsigned long tlb_hits = 0, tlb_misses = 0;
+    unsigned long line_num = 0;
     unsigned int frames_used = 0;
     unsigned int fifo_next = 0;
 
@@ -90,6 +110,12 @@ int main(int argc, char *argv[])
         unsigned int vaddr  = (unsigned int)strtoul(p, NULL, 16);
         unsigned int vpn    = vaddr / page_size;
         unsigned int offset = vaddr % page_size;
+
+        if (vpn >= num_vpages) {
+            printf("%6lu  [vaddr] 0x%04X\tXXXX\tInvalid vaddr\n", line_num, vaddr);
+            line_num++;
+            continue;
+        }
 
         int frame;
         const char *arrow;
@@ -115,11 +141,16 @@ int main(int argc, char *argv[])
 
                 if (frames_used < num_frames) {
                     frame = (int)frames_used++;
-                } else {
+                } else if (num_frames > 0) {
                     frame = (int)fifo_next;
                     int old_vpn = frame_owner[frame];
-                    page_table[old_vpn] = -1;
+                    if (old_vpn >= 0) {
+                        page_table[old_vpn] = -1;
+                        tlb_invalidate((unsigned int)old_vpn);
+                    }
                     fifo_next = (fifo_next + 1) % num_frames;
+                } else {
+                    frame = 0;
                 }
 
                 page_table[vpn] = frame;
@@ -131,11 +162,13 @@ int main(int argc, char *argv[])
 
         unsigned int paddr = (unsigned int)frame * page_size + offset;
         printf("%6lu  [vaddr] 0x%04X\t%s\t[paddr] 0x%04X\n",
-               accesses, vaddr, arrow, paddr);
+               line_num, vaddr, arrow, paddr);
         accesses++;
+        line_num++;
     }
 
     if (input_file) fclose(fp);
+    free(tlb);
 
     printf("\nTotal accesses : %lu\n", accesses);
     printf("Page faults    : %lu\n", faults);

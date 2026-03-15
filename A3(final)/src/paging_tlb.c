@@ -6,7 +6,6 @@
 
 #define VM_SIZE      (4 * 1024)
 #define RAM_SIZE     (1 * 1024)
-#define TLB_SIZE     4
 #define MAX_ACCESSES 65536
 
 typedef enum { POLICY_FIFO, POLICY_LRU, POLICY_MIN } Policy;
@@ -25,7 +24,8 @@ typedef struct {
     unsigned long last_used; /* step last accessed (LRU) */
 } TLB_Entry;
 
-TLB_Entry tlb[TLB_SIZE];
+TLB_Entry *tlb = NULL;
+int tlb_size     = 4;
 int tlb_count    = 0;
 int tlb_fifo_head = 0; /* FIFO: index of oldest entry */
 
@@ -122,9 +122,18 @@ int main(int argc, char *argv[])
             if      (strcmp(argv[i], "LRU")  == 0) policy = POLICY_LRU;
             else if (strcmp(argv[i], "MIN")  == 0) policy = POLICY_MIN;
             else if (strcmp(argv[i], "FIFO") == 0) policy = POLICY_FIFO;
+        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+            tlb_size = atoi(argv[++i]);
         } else {
             input_file = argv[i];
         }
+    }
+
+    tlb = (TLB_Entry *)malloc((size_t)tlb_size * sizeof(TLB_Entry));
+    if (!tlb) { perror("malloc"); return EXIT_FAILURE; }
+    for (int i = 0; i < tlb_size; i++) {
+        tlb[i].vpn = -1; tlb[i].frame = -1;
+        tlb[i].loaded = 0; tlb[i].last_used = 0;
     }
 
     unsigned int num_vpages = VM_SIZE / page_size;
@@ -146,18 +155,19 @@ int main(int argc, char *argv[])
     printf("NUM_VPAGES\t%u\n",   num_vpages);
     printf("NUM_FRAMES\t%u\n",   num_frames);
     printf("PAGE_POLICY\t%s\n",  pname);
-    printf("TLB_SIZE\t%d\n",     TLB_SIZE);
+    printf("TLB_SIZE\t%d\n",     tlb_size);
     printf("TLB_POLICY\t%s\n\n", pname);
 
     FILE *fp = stdin;
     if (input_file) {
         fp = fopen(input_file, "r");
-        if (!fp) { perror(input_file); return EXIT_FAILURE; }
+        if (!fp) { perror(input_file); free(tlb); return EXIT_FAILURE; }
     }
 
     char line[64];
 
-    /* MIN requires knowing future accesses: pre-read entire file */
+    /* MIN requires knowing future accesses: pre-read entire file.
+       Store ALL addresses (including out-of-range) so step indices align. */
     if (policy == POLICY_MIN) {
         while (fgets(line, sizeof(line), fp) &&
                total_accesses_loaded < MAX_ACCESSES) {
@@ -172,6 +182,7 @@ int main(int argc, char *argv[])
 
     unsigned long faults    = 0, accesses = 0;
     unsigned long tlb_hits  = 0, tlb_misses = 0;
+    unsigned long line_num  = 0;
     unsigned int  frames_used = 0;
     unsigned int  fifo_next   = 0; /* FIFO RAM eviction pointer */
     int step = 0;
@@ -192,6 +203,14 @@ int main(int argc, char *argv[])
 
         unsigned int vpn    = vaddr / page_size;
         unsigned int offset = vaddr % page_size;
+
+        if (vpn >= num_vpages) {
+            printf("%6lu  [vaddr] 0x%04X\tXXXX\tInvalid vaddr\n", line_num, vaddr);
+            line_num++;
+            step++;
+            continue;
+        }
+
         int frame;
         const char *arrow;
 
@@ -223,7 +242,7 @@ int main(int argc, char *argv[])
 
                 if (frames_used < num_frames) {
                     frame = (int)frames_used++;
-                } else {
+                } else if (num_frames > 0) {
                     /* Evict a RAM frame */
                     if (policy == POLICY_LRU) {
                         frame = evict_ram(POLICY_LRU, (int)num_frames,
@@ -236,8 +255,12 @@ int main(int argc, char *argv[])
                         fifo_next = (fifo_next + 1) % num_frames;
                     }
                     int old_vpn = frame_owner[frame];
-                    page_table[old_vpn] = -1;
-                    tlb_invalidate(old_vpn);
+                    if (old_vpn >= 0) {
+                        page_table[old_vpn] = -1;
+                        tlb_invalidate(old_vpn);
+                    }
+                } else {
+                    frame = 0;
                 }
 
                 page_table[vpn] = frame;
@@ -249,7 +272,7 @@ int main(int argc, char *argv[])
 
             /* Insert into TLB */
             int tlb_slot;
-            if (tlb_count < TLB_SIZE) {
+            if (tlb_count < tlb_size) {
                 tlb_slot = tlb_count++;
             } else {
                 if (policy == POLICY_LRU) {
@@ -258,7 +281,7 @@ int main(int argc, char *argv[])
                     tlb_slot = evict_tlb(POLICY_MIN, step, page_size);
                 } else {
                     tlb_slot = tlb_fifo_head;
-                    tlb_fifo_head = (tlb_fifo_head + 1) % TLB_SIZE;
+                    tlb_fifo_head = (tlb_fifo_head + 1) % tlb_size;
                 }
             }
             tlb[tlb_slot].vpn       = (int)vpn;
@@ -269,12 +292,14 @@ int main(int argc, char *argv[])
 
         unsigned int paddr = (unsigned int)frame * page_size + offset;
         printf("%6lu  [vaddr] 0x%04X\t%s\t[paddr] 0x%04X\n",
-               accesses, vaddr, arrow, paddr);
+               line_num, vaddr, arrow, paddr);
         accesses++;
+        line_num++;
         step++;
     }
 
     if (fp && input_file) fclose(fp);
+    free(tlb);
 
     printf("\nTotal accesses : %lu\n", accesses);
     printf("Page faults    : %lu\n",  faults);
