@@ -1,0 +1,21 @@
+VM_SIZE	4096B
+RAM_SIZE	1024B
+PAGE_SIZE	128B
+NUM_VPAGES	32
+NUM_FRAMES	8
+PAGE_POLICY	FIFO
+
+     0  [vaddr] 0x0aba	-x->	[paddr] 0x003a
+     1  [vaddr] 0x0a37	-x->	[paddr] 0x00b7
+     2  [vaddr] 0x009e	-x->	[paddr] 0x011e
+     3  [vaddr] 0x0c85	-x->	[paddr] 0x0185
+     4  [vaddr] 0x0da7	-x->	[paddr] 0x0227
+     5  [vaddr] 0x0c79	-x->	[paddr] 0x02f9
+     6  [vaddr] 0x0999	-x->	[paddr] 0x0319
+     7  [vaddr] 0x08c7	-x->	[paddr] 0x03c7
+     8  [vaddr] 0x0ae9	--->	[paddr] 0x0069
+     9  [vaddr] 0x038e	-x->	[paddr] 0x000e
+
+Total accesses : 10
+Page faults    : 9
+Fault rate     : 90.00%
