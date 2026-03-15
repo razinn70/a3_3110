@@ -42,6 +42,7 @@ int main(int argc, char *argv[])
     }
 
     unsigned long faults = 0, accesses = 0;
+    unsigned long line_num = 0;
     unsigned int frames_used = 0;
     unsigned int fifo_next = 0;  // index of next frame to evict
 
@@ -55,6 +56,12 @@ int main(int argc, char *argv[])
         unsigned int vaddr = (unsigned int)strtoul(p, NULL, 16);
         unsigned int vpn   = vaddr / page_size;
         unsigned int offset = vaddr % page_size;
+
+        if (vpn >= num_vpages) {
+            printf("%6lu  [vaddr] 0x%04x\tXXXX\tInvalid vaddr\n", line_num, vaddr);
+            line_num++;
+            continue;
+        }
 
         int frame;
         const char *arrow;
@@ -70,12 +77,14 @@ int main(int argc, char *argv[])
 
             if (frames_used < num_frames) {
                 frame = (int)frames_used++;
-            } else {
+            } else if (num_frames > 0) {
                 // FIFO eviction
                 frame = (int)fifo_next;
                 int old_vpn = frame_owner[frame];
-                page_table[old_vpn] = -1;
+                if (old_vpn >= 0) page_table[old_vpn] = -1;
                 fifo_next = (fifo_next + 1) % num_frames;
+            } else {
+                frame = 0;
             }
 
             page_table[vpn] = frame;
@@ -84,8 +93,9 @@ int main(int argc, char *argv[])
 
         unsigned int paddr = (unsigned int)frame * page_size + offset;
         printf("%6lu  [vaddr] 0x%04x\t%s\t[paddr] 0x%04x\n",
-               accesses, vaddr, arrow, paddr);
+               line_num, vaddr, arrow, paddr);
         accesses++;
+        line_num++;
     }
 
     if (input_file) fclose(fp);
